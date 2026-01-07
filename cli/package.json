@@ -1,0 +1,39 @@
+{
+  "name": "mathvision-cli",
+  "version": "1.0.0",
+  "description": "CLI tool to solve math problems from images or text",
+  "main": "lib/index.js",
+  "bin": {
+    "mathvision": "./bin/mathvision.js",
+    "mv": "./bin/mathvision.js"
+  },
+  "scripts": {
+    "test": "node bin/mathvision.js --help"
+  },
+  "keywords": [
+    "math",
+    "ocr",
+    "solver",
+    "calculator",
+    "algebra",
+    "calculus",
+    "geometry"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "algebrite": "^1.4.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "mathjs": "^12.2.1",
+    "nerdamer": "^1.1.13",
+    "ora": "^5.4.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^1.1.1",
+    "sharp": "^0.33.2",
+    "tesseract.js": "^5.0.4"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

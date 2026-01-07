@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="MathVision - Extract and solve math problems from photos with step-by-step solutions and visualizations. Free, private, runs entirely in your browser.">
+    <meta name="theme-color" content="#0a0a0a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MathVision — Visual Math Solver</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>∫</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tesseract.js for OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- Math.js for calculations -->
+    <script src="https://cdn.jsdelivr.net/npm/mathjs@12.2.1/lib/browser/math.min.js"></script>
+    <!-- Algebrite for symbolic math -->
+    <script src="https://cdn.jsdelivr.net/npm/algebrite@1.4.0/dist/algebrite.bundle-for-browser.min.js"></script>
+    <!-- Nerdamer for advanced symbolic computation -->
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/nerdamer.core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/Algebra.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/Calculus.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/Solve.min.js"></script>
+    <!-- Cortex Compute Engine for symbolic computing -->
+    <script src="https://cdn.jsdelivr.net/npm/@cortex-js/compute-engine@0.30.2/dist/compute-engine.min.js"></script>
+    <!-- KaTeX for math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <!-- Plotly.js for graphs -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <!-- Function Plot for additional graphing -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/function-plot@1.24.2/dist/function-plot.min.js"></script>
+    <!-- PDF.js for reading PDFs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- pdf-lib for creating/annotating PDFs -->
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!-- jsPDF for PDF generation -->
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    
+    <!-- Firebase Config (loaded before Firebase SDK) -->
+    <script src="firebase-config.js"></script>
+    
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js';
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        
+        let db = null;
+        let analytics = null;
+        
+        // Initialize Firebase only if config is valid
+        if (window.MATHVISION_FIREBASE_ENABLED) {
+            try {
+                const app = initializeApp(window.MATHVISION_FIREBASE_CONFIG);
+                db = getFirestore(app);
+                analytics = getAnalytics(app);
+                console.log('Firebase initialized successfully');
+            } catch (error) {
+                console.warn('Firebase initialization failed:', error.message);
+            }
+        } else {
+            console.log('Firebase disabled - no valid config found. Problems will be stored locally only.');
+        }
+        
+        // Make Firebase functions available globally
+        window.firebaseDB = {
+            enabled: !!db,
+            
+            // Analytics helper
+            logEvent(eventName, params = {}) {
+                if (analytics) {
+                    try {
+                        logEvent(analytics, eventName, params);
+                    } catch (e) {
+                        console.warn('Analytics event failed:', e);
+                    }
+                }
+            },
+            
+            async saveProblem(problemData) {
+                // All problems go to Firebase - this is the cost of using the free tool
+                if (!db) {
+                    console.warn('Firebase not available - problem not saved to database');
+                    return null;
+                }
+                
+                try {
+                    const docRef = await addDoc(collection(db, 'solved_problems'), {
+                        ...problemData,
+                        timestamp: serverTimestamp(),
+                        savedAt: new Date().toISOString(),
+                        userAgent: navigator.userAgent.substring(0, 100),
+                        sessionId: window.sessionId || 'anonymous'
+                    });
+                    console.log('Problem saved to database:', docRef.id);
+                    return docRef.id;
+                } catch (error) {
+                    console.error('Error saving to database:', error);
+                    return null;
+                }
+            },
+            
+            async getProblems(maxResults = 100) {
+                // Get all problems from Firebase public database
+                if (!db) {
+                    console.warn('Firebase not available');
+                    return [];
+                }
+                
+                try {
+                    const q = query(
+                        collection(db, 'solved_problems'),
+                        orderBy('timestamp', 'desc'),
+                        limit(maxResults)
+                    );
+                    const snapshot = await getDocs(q);
+                    const problems = [];
+                    snapshot.forEach(doc => {
+                        problems.push({
+                            id: doc.id,
+                            ...doc.data()
+                        });
+                    });
+                    return problems;
+                } catch (error) {
+                    console.error('Error fetching from database:', error);
+                    return [];
+                }
+            },
+            
+            async getTotalCount() {
+                // Get approximate count (for display)
+                if (!db) return 0;
+                try {
+                    const q = query(collection(db, 'solved_problems'), limit(1000));
+                    const snapshot = await getDocs(q);
+                    return snapshot.size;
+                } catch (e) {
+                    return 0;
+                }
+            }
+        };
+    </script>
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span class="logo-icon" aria-hidden="true">∫</span>
+                <h1>MathVision</h1>
+            </div>
+            <p class="tagline">Universal math solver with step-by-step solutions</p>
+            
+            <!-- Navigation Tabs -->
+            <nav class="main-nav" role="tablist" aria-label="Main navigation">
+                <button class="nav-tab active" role="tab" aria-selected="true" aria-controls="solve-panel" id="solve-tab" data-tab="solve">
+                    <span class="nav-icon">◎</span>
+                    <span>Solve</span>
+                </button>
+                <button class="nav-tab" role="tab" aria-selected="false" aria-controls="history-panel" id="history-tab" data-tab="history">
+                    <span class="nav-icon">☰</span>
+                    <span>Problem DB</span>
+                </button>
+                <button class="nav-tab" role="tab" aria-selected="false" aria-controls="about-panel" id="about-tab" data-tab="about">
+                    <span class="nav-icon">?</span>
+                    <span>About</span>
+                </button>
+            </nav>
+        </header>
+
+        <main id="main-content">
+            <!-- Solve Panel -->
+            <div class="tab-panel active" id="solve-panel" role="tabpanel" aria-labelledby="solve-tab">
+                <section class="upload-section">
+                    <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="Upload area. Click or drag and drop an image or PDF">
+                        <div class="upload-icon" aria-hidden="true">◎</div>
+                        <h2>Drop your math image or PDF here</h2>
+                        <p>Supports equations, graphs, geometry, diagrams, and PDF documents</p>
+                        <input type="file" id="imageInput" accept="image/*,.pdf" hidden aria-label="Choose image file">
+                        <div class="upload-buttons">
+                            <button class="btn btn-primary" id="uploadBtn" type="button">
+                                <span aria-hidden="true">📷</span> Choose Image
+                            </button>
+                            <button class="btn btn-primary" id="uploadPdfBtn" type="button">
+                                <span aria-hidden="true">📄</span> Choose PDF
+                            </button>
+                            <button class="btn" id="cameraBtn" type="button">
+                                <span aria-hidden="true">◉</span> Camera
+                            </button>
+                        </div>
+                        <input type="file" id="pdfInput" accept=".pdf" hidden aria-label="Choose PDF file">
+                    </div>
+                    
+                    <div class="preview-container hidden" id="previewContainer">
+                        <img id="imagePreview" alt="Preview of uploaded image">
+                        <button class="btn btn-remove" id="removeBtn" type="button" aria-label="Remove image">✕ Remove</button>
+                    </div>
+
+                    <div class="pdf-preview-container hidden" id="pdfPreviewContainer">
+                        <div class="pdf-info">
+                            <span class="pdf-icon" aria-hidden="true">📄</span>
+                            <div class="pdf-details">
+                                <span id="pdfFileName">document.pdf</span>
+                                <span id="pdfPageCount">0 pages</span>
+                            </div>
+                        </div>
+                        <div class="pdf-pages" id="pdfPages" aria-label="PDF page previews"></div>
+                        <button class="btn btn-remove" id="removePdfBtn" type="button" aria-label="Remove PDF">✕ Remove PDF</button>
+                    </div>
+
+                    <div class="manual-input">
+                        <label for="manualInput" class="manual-input-label">
+                            <h3>Or enter manually</h3>
+                        </label>
+                        <textarea id="manualInput" placeholder="Examples:
+• 2x + 5 = 15
+• x^2 - 4x + 3 = 0
+• graph y = x^2 - 4
+• derivative of x^3 + 2x
+• integrate x^2 from 0 to 5
+• area of circle radius 5
+• matrix [[1,2],[3,4]] determinant
+• mean of 10, 20, 30, 40, 50
+• sin(45 degrees)
+• log_2(8)" aria-describedby="input-examples"></textarea>
+                        <p id="input-examples" class="sr-only">Enter any math problem. Supports arithmetic, algebra, calculus, geometry, statistics, matrices, and more.</p>
+                    </div>
+
+                    <button class="btn btn-solve" id="solveBtn" type="button">
+                        <span class="solve-icon" aria-hidden="true">⚡</span>
+                        <span>Solve</span>
+                    </button>
+                    
+                    <p class="data-notice">📢 All solved problems are added to our <a href="#" onclick="document.querySelector('[data-tab=history]').click(); return false;">public database</a>.</p>
+                    
+                    <!-- Quick Examples -->
+                    <div class="quick-examples">
+                        <span class="quick-label">Try:</span>
+                        <button class="example-btn" type="button" data-example="x^2 - 5x + 6 = 0">Quadratic</button>
+                        <button class="example-btn" type="button" data-example="derivative of sin(x^2)">Derivative</button>
+                        <button class="example-btn" type="button" data-example="integrate x^3 from 0 to 2">Integral</button>
+                        <button class="example-btn" type="button" data-example="mean of 10, 20, 30, 40, 50">Statistics</button>
+                        <button class="example-btn" type="button" data-example="graph y = sin(x)">Graph</button>
+                    </div>
+                </section>
+
+                <section class="processing-section hidden" id="processingSection" aria-live="polite" aria-busy="true">
+                    <div class="loader" aria-hidden="true"></div>
+                    <p id="processingStatus">Analyzing image...</p>
+                </section>
+
+                <section class="results-section hidden" id="resultsSection">
+                    <div class="detected-text">
+                        <div class="detected-header">
+                            <h3>Detected Expression</h3>
+                            <button class="btn btn-edit" id="editDetectedBtn" type="button" aria-label="Edit detected text">✎ Edit</button>
+                        </div>
+                        <div id="detectedText" role="textbox" aria-readonly="true"></div>
+                    </div>
+
+                    <div class="solutions-container" id="solutionsContainer" aria-label="Solutions">
+                    </div>
+
+                    <div class="pdf-download-section hidden" id="pdfDownloadSection">
+                        <h3><span aria-hidden="true">📄</span> Annotated PDF</h3>
+                        <p>Download your PDF with solutions annotated in red</p>
+                        <button class="btn btn-primary" id="downloadPdfBtn" type="button">
+                            <span aria-hidden="true">⬇</span> Download Annotated PDF
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Problem Database Panel -->
+            <div class="tab-panel hidden" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
+                <section class="history-section">
+                    <div class="history-header">
+                        <div class="history-title">
+                            <h2>Community Problem Database</h2>
+                            <p class="db-subtitle">All problems solved by users are shared here. Free to use = problems are public.</p>
+                        </div>
+                        <div class="history-actions">
+                            <button class="btn btn-refresh" id="refreshHistoryBtn" type="button" aria-label="Refresh database">
+                                <span aria-hidden="true">↻</span> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="history-filters">
+                        <select id="categoryFilter" aria-label="Filter by category">
+                            <option value="">All Categories</option>
+                            <option value="Algebra">Algebra</option>
+                            <option value="Calculus">Calculus</option>
+                            <option value="Geometry">Geometry</option>
+                            <option value="Trigonometry">Trigonometry</option>
+                            <option value="Statistics">Statistics</option>
+                            <option value="Matrix">Matrix</option>
+                            <option value="Vector">Vector</option>
+                            <option value="Arithmetic">Arithmetic</option>
+                        </select>
+                        <input type="search" id="searchHistory" placeholder="Search problems..." aria-label="Search problems">
+                    </div>
+                    
+                    <div class="history-stats" id="historyStats">
+                        <span class="stat"><strong id="problemCount">0</strong> problems in database</span>
+                        <span class="stat-divider">•</span>
+                        <span class="stat" id="firebaseStatus">
+                            <span class="status-dot online"></span>
+                            <span>Live sync</span>
+                        </span>
+                    </div>
+                    
+                    <div class="history-list" id="historyList" aria-label="Problem database" role="list">
+                        <div class="history-empty">
+                            <p>Loading problem database...</p>
+                            <p>All solved problems are shared with the community.</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- About Panel -->
+            <div class="tab-panel hidden" id="about-panel" role="tabpanel" aria-labelledby="about-tab">
+                <section class="about-section">
+                    <h2>About MathVision</h2>
+                    
+                    <div class="about-card">
+                        <h3>🧮 Universal Math Solver</h3>
+                        <p>MathVision can solve virtually any math problem you throw at it. From basic arithmetic to advanced calculus, we've got you covered.</p>
+                    </div>
+                    
+                    <div class="about-card">
+                        <h3>🌐 Community Powered</h3>
+                        <p>MathVision is free to use. In exchange, all solved problems are added to our public database, helping build a valuable resource for students and educators worldwide.</p>
+                    </div>
+                    
+                    <div class="about-card">
+                        <h3>📸 OCR Powered</h3>
+                        <p>Take a photo of handwritten or printed math problems. Our OCR engine extracts the text and solves it instantly.</p>
+                    </div>
+                    
+                    <div class="supported-types">
+                        <h3>Supported Problem Types</h3>
+                        <div class="type-grid">
+                            <div class="type-item"><span class="type-icon">➕</span><span>Arithmetic</span></div>
+                            <div class="type-item"><span class="type-icon">x²</span><span>Algebra</span></div>
+                            <div class="type-item"><span class="type-icon">∫</span><span>Calculus</span></div>
+                            <div class="type-item"><span class="type-icon">△</span><span>Geometry</span></div>
+                            <div class="type-item"><span class="type-icon">sin</span><span>Trigonometry</span></div>
+                            <div class="type-item"><span class="type-icon">σ</span><span>Statistics</span></div>
+                            <div class="type-item"><span class="type-icon">[ ]</span><span>Matrices</span></div>
+                            <div class="type-item"><span class="type-icon">→</span><span>Vectors</span></div>
+                            <div class="type-item"><span class="type-icon">log</span><span>Logarithms</span></div>
+                            <div class="type-item"><span class="type-icon">i</span><span>Complex</span></div>
+                            <div class="type-item"><span class="type-icon">lim</span><span>Limits</span></div>
+                            <div class="type-item"><span class="type-icon">∑</span><span>Series</span></div>
+                        </div>
+                    </div>
+                    
+                    <div class="tech-stack">
+                        <h3>Powered By</h3>
+                        <div class="tech-list">
+                            <span class="tech-badge">Tesseract.js</span>
+                            <span class="tech-badge">Math.js</span>
+                            <span class="tech-badge">Algebrite</span>
+                            <span class="tech-badge">Nerdamer</span>
+                            <span class="tech-badge">Plotly.js</span>
+                            <span class="tech-badge">KaTeX</span>
+                            <span class="tech-badge">PDF.js</span>
+                            <span class="tech-badge">pdf-lib</span>
+                            <span class="tech-badge">Firebase</span>
+                        </div>
+                    </div>
+                    
+                    <div class="keyboard-shortcuts">
+                        <h3>Keyboard Shortcuts</h3>
+                        <div class="shortcut-list">
+                            <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Enter</kbd><span>Solve problem</span></div>
+                            <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>V</kbd><span>Paste image</span></div>
+                            <div class="shortcut"><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd><span>Switch tabs</span></div>
+                            <div class="shortcut"><kbd>Esc</kbd><span>Close modal</span></div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <footer>
+            <p>MathVision — Free, private, runs entirely in your browser</p>
+            <p class="version">v2.0.0</p>
+        </footer>
+    </div>
+
+    <!-- Camera Modal -->
+    <div class="modal hidden" id="cameraModal" role="dialog" aria-modal="true" aria-labelledby="camera-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="camera-title">Capture Math Problem</h3>
+                <button class="btn-close" id="closeCameraBtn" type="button" aria-label="Close camera">✕</button>
+            </div>
+            <video id="cameraFeed" autoplay playsinline aria-label="Camera feed"></video>
+            <canvas id="cameraCanvas" class="hidden" aria-hidden="true"></canvas>
+            <div class="camera-controls">
+                <button class="btn btn-capture" id="captureBtn" type="button">
+                    <span aria-hidden="true">📷</span> Capture
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="mathSolver.js"></script>
+    <script src="visualizer.js"></script>
+    <script src="pdfHandler.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
